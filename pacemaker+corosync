@@ -1,24 +1,31 @@
 
-1.INSTALL COROSYNC/PACEMAKER
+1.Installing and Enabling the Pacemaker and Corosync Service
 
-sudo yum install pcs pacemaker fence-agents-all
+# sudo dnf config-manager --enable ol8_appstream ol8_baseos_latest ol8_addons
+# sudo dnf install pcs pacemaker resource-agents fence-agents-all
 
-Reference: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/high_availability_add-on_reference/s1-installation-haar
-
+check the version:
+# crmadmin --version
+# corosync -v
 
 2. FIREWALL
 
-sudo firewall-cmd --permanent --add-service=high-availability
-sudo firewall-cmd --add-service=high-availability
+# sudo firewall-cmd --permanent --add-service=high-availability
+# sudo firewall-cmd --add-service=high-availability
 
-sudo firewall-cmd --add-port=2224/tcp
-sudo firewall-cmd --add-port=3121/tcp
-sudo firewall-cmd --add-port=5403/tcp
-sudo firewall-cmd --add-port=5404/udp
-sudo firewall-cmd --add-port=5405/udp
-sudo firewall-cmd --add-port=21064/tcp
-sudo firewall-cmd --add-port=9929/tcp
-sudo firewall-cmd --add-port=9929/udp
+this step typically enables the following ports: 
+TCP port 2224 (used by the pcs daemon), port 3121 (for Pacemaker Remote nodes), port 21064 (for DLM resources)
+UDP ports 5405 (for Corosync clustering), and 5404 (for Corosync multicast, if configured)
+
+OR alternately do this one by one:
+# sudo firewall-cmd --add-port=2224/tcp
+# sudo firewall-cmd --add-port=3121/tcp
+# sudo firewall-cmd --add-port=5403/tcp
+# sudo firewall-cmd --add-port=5404/udp
+# sudo firewall-cmd --add-port=5405/udp
+# sudo firewall-cmd --add-port=21064/tcp
+# sudo firewall-cmd --add-port=9929/tcp
+# sudo firewall-cmd --add-port=9929/udp
 
 A simple Corosync/Pacemaker Cluster needs the following firewall settings:
 
@@ -28,35 +35,142 @@ TCP port 5403 for quorum device with corosync-qnetd.
 UDP port 5404 for corosync if it is configured for multicast UDP.
 UDP port 5405 for corosync.
 
-Reference: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/high_availability_add-on_reference/s1-firewalls-haar
-
-3.check the version of pacemaker/corosync 
-
-crmadmin --version
-corosync -v
-
-output like this:
-[opc@node-1 ~]$ crmadmin --version
-Pacemaker 2.1.4-5.0.1.el8_7.2
-Written by Andrew Beekhof and the Pacemaker project contributors
-
-[opc@node-1 ~]$ corosync -v
-Corosync Cluster Engine, version '3.1.5'
-Copyright (c) 2006-2021 Red Hat, Inc.
-Built-in features: dbus systemd xmlconf vqsim nozzle snmp pie relro bindnow
-Available crypto models: nss openssl
-Available compression models: zlib lz4 lz4hc lzo2 lzma bzip2
 
 4.DNS resolution must work.
-
 Nodes must be reachable (firewall).
 Nodes must allow traffic between them.
 
-#sudo vi /etc/hosts
+# sudo vi /etc/hosts
 10.0.0.76 master
 10.0.0.108 slave
 
 # ping node1
 # ping node2
 
+5. Setup the hacluster user with password.
 
+# sudo passwd hacluster
+Changing password for user hacluster.
+New password: Nihao_123
+Retype new password: 
+passwd: all authentication tokens updated successfully.
+
+6.Running the pcsd
+
+# sudo systemctl enable --now pcsd.service
+
+7.Creating the Cluster
+
+Authenticate Nodes:
+# sudo pcs host auth master slave -u hacluster
+Password: Nihao_123
+slave: Authorized
+master: Authorized
+
+OR alternately:
+# sudo pcs host auth master addr=10.0.0.76 slave addr=10.0.0.108 -u hacluster
+
+Create Cluster:
+# sudo pcs cluster setup mysqlcluster master addr=10.0.0.76 slave addr=10.0.0.108
+...
+Cluster has been successfully set up.
+
+Start Cluster:
+# sudo pcs cluster start --all
+master: Starting Cluster...
+slave: Starting Cluster...
+# sudo pcs cluster enable --all //enable these services to start at boot time 
+
+OR alternately:
+# sudo systemctl start pacemaker.service
+# sudo systemctl enable pacemaker.service
+
+OR can setup cluster and start immediatlly:
+# sudo pcs cluster setup mysqlcluster --start master slave --force
+
+During the setup cluser creates configuration file
+# sudo cat /etc/corosync/corosync.conf
+
+If somthing fails:
+# sudo pcs cluster destroy
+
+8.Set cluster parameters:
+
+# sudo pcs property set stonith-enabled=false //Disable the fencing feature just for testing,Beacause we do NOT have shared data
+# sudo pcs property set no-quorum-policy=ignore //Two-node cluster, disabling the no-quorum policy makes the most sense
+# sudo pcs resource defaults update // Migration policy
+
+8.Creating a Service and Testing Failover
+
+Add a Resource, A resource is a service which is managed by the Cluster :
+# sudo pcs resource create dummy_service ocf:pacemaker:Dummy op monitor interval=120s
+
+View Resources:
+# sudo pcs status
+Cluster name: mysqlcluster
+Status of pacemakerd: 'Pacemaker is running' (last updated 2023-04-25 09:02:34Z)
+Cluster Summary:
+  * Stack: corosync
+  * Current DC: master (version 2.1.4-5.0.1.el8_7.2-dc6eb4362e) - partition with quorum
+  * Last updated: Tue Apr 25 09:02:34 2023
+  * Last change:  Tue Apr 25 09:00:10 2023 by root via cibadmin on master
+  * 2 nodes configured
+  * 1 resource instance configured
+
+Node List:
+  * Online: [ master slave ]
+
+Full List of Resources:
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+
+Daemon Status:
+  corosync: active/enabled
+  pacemaker: active/enabled
+  pcsd: active/enabled
+  
+
+Simulate service failure:
+# sudo crm_resource --resource dummy_service --force-stop
+
+View the Failed Actions message:
+# sudo crm_mon
+
+# sudo pcs resource status
+
+Update resource
+# sudo pcs resource update
+
+Move Resource to other node and checke the status:
+# sudo pcs resource move dummy_service slave
+# sudo pcs status
+...
+...
+Full List of Resources:
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started slave
+  
+
+Add VIP Resource:
+# sudo pcs resource create VirtualIP ocf:heartbeat:IPaddr2 ip=192.168.1.199 cidr_netmask=32 op monitor interval=5s
+# sudo pcs status resources
+ * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Stopped
+# sudo pcs status cluster
+...
+2 resource instances configured
+...
+# pcs resource enable VirtualIP 
+...
+...
+Full List of Resources:
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Stopped
+...
+...
+
+# sudo pcs resource update VirtualIP ocf:heartbeat:IPaddr2 ip=192.168.1.199 cidr_netmask=32 op monitor interval=5s --force
+
+
+
+
+Manually start node
+# sudo pcs cluster start master
