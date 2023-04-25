@@ -1,0 +1,62 @@
+
+1.INSTALL COROSYNC/PACEMAKER
+
+sudo yum install pcs pacemaker fence-agents-all
+
+Reference: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/high_availability_add-on_reference/s1-installation-haar
+
+
+2. FIREWALL
+
+sudo firewall-cmd --permanent --add-service=high-availability
+sudo firewall-cmd --add-service=high-availability
+
+sudo firewall-cmd --add-port=2224/tcp
+sudo firewall-cmd --add-port=3121/tcp
+sudo firewall-cmd --add-port=5403/tcp
+sudo firewall-cmd --add-port=5404/udp
+sudo firewall-cmd --add-port=5405/udp
+sudo firewall-cmd --add-port=21064/tcp
+sudo firewall-cmd --add-port=9929/tcp
+sudo firewall-cmd --add-port=9929/udp
+
+A simple Corosync/Pacemaker Cluster needs the following firewall settings:
+
+TCP port 2224 for pcsd, Web UI and node-to-node communication.
+TCP port 3121 if cluster has any Pacemaker Remote nodes.
+TCP port 5403 for quorum device with corosync-qnetd.
+UDP port 5404 for corosync if it is configured for multicast UDP.
+UDP port 5405 for corosync.
+
+Reference: https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/high_availability_add-on_reference/s1-firewalls-haar
+
+3.check the version of pacemaker/corosync 
+
+crmadmin --version
+corosync -v
+
+output like this:
+[opc@node-1 ~]$ crmadmin --version
+Pacemaker 2.1.4-5.0.1.el8_7.2
+Written by Andrew Beekhof and the Pacemaker project contributors
+
+[opc@node-1 ~]$ corosync -v
+Corosync Cluster Engine, version '3.1.5'
+Copyright (c) 2006-2021 Red Hat, Inc.
+Built-in features: dbus systemd xmlconf vqsim nozzle snmp pie relro bindnow
+Available crypto models: nss openssl
+Available compression models: zlib lz4 lz4hc lzo2 lzma bzip2
+
+4.DNS resolution must work.
+
+Nodes must be reachable (firewall).
+Nodes must allow traffic between them.
+
+#sudo vi /etc/hosts
+10.0.0.76 master
+10.0.0.108 slave
+
+# ping node1
+# ping node2
+
+
