@@ -1,0 +1,2 @@
+# replication
+pacemaker+corosync+replication
