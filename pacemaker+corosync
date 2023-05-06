@@ -400,3 +400,53 @@ SHOW REPLICA STATUS\G
 6 rows in set (0.0008 sec)
 
 
+14. Option to Create ReplicaSet instead of Master/Master Replication
+
+mysqladmin -uadmin -hmaser -P3306 -pWelcome1 shutdown
+mysqladmin -uadmin -hslave -P3306 -pWelcome1 shutdown
+
+sudo rm -rf /mysql/data/* /mysql/log/* /mysql/temp/* /mysql/binlog/*
+sudo /mysql/mysql-latest/bin/mysqld --defaults-file=/mysql/etc/my.cnf --initialize-insecure --user=mysqluser
+sudo /mysql/mysql-latest/bin/mysqld_safe --defaults-file=/mysql/etc/my.cnf --user=mysqluser &
+mysqlsh root@localhost:3306
+SET PASSWORD='Welcome1';CREATE USER 'admin'@'%' IDENTIFIED BY 'Welcome1';GRANT ALL PRIVILEGES ON *.* TO 'admin'@'%' WITH GRANT OPTION;
+
+mysqlsh admin@master:3306
+dba.configureInstance("admin@master:3306")
+dba.configureInstance("admin@slave:3306")
+
+seoul = dba.createReplicaSet('seoul')
+seoul.addInstance('admin@slave:3306')
+
+Install MySQL Router:
+sudo yum install mysql-router
+sudo mysqlrouter --bootstrap admin@10.0.0.100:3306 --user mysqlrouter(/etc/mysqlrouter/mysqlrouter.conf)
+sudo systemctl start mysqlrouter
+
+15. Add MySQL Router Resource to Pacemaker
+
+sudo pcs resource list | grep router
+pcs resource create mysqlrouter systemd:mysqlrouter clone
+sudo pcs resource status
+ ------------------------------------------------------ 
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+  * Started: [ master slave ]
+ ------------------------------------------------------ 
+
+During Master Fail, needed manul failover by following command:
+mysqlsh admin@10.0.0.100:6447
+seoul = dba.getReplicaSet()
+seoul.forcePrimaryInstance()
+
+
+
+
+
+
+
+
+
+
