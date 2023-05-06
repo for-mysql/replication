@@ -289,10 +289,16 @@ enforce-gtid-consistency=true
 sudo chown -R mysqluser:mysqlgrp /mysql
 sudo chmod -R 750 /mysql
 
+sudo rm -rf /mysql/data/* /mysql/log/* /mysql/temp/* /mysql/binlog/*
 sudo /mysql/mysql-latest/bin/mysqld --defaults-file=/mysql/etc/my.cnf --initialize-insecure --user=mysqluser
 sudo /mysql/mysql-latest/bin/mysqld_safe --defaults-file=/mysql/etc/my.cnf --user=mysqluser &
 mysql -uroot -h127.0.0.1 -P3306  -p
-mysql> SET PASSWORD='Welcome1';CREATE USER 'admin'@'%' IDENTIFIED WITH mysql_native_password BY 'Welcome1';GRANT ALL PRIVILEGES ON *.* TO 'admin'@'%' WITH GRANT OPTION;
+OR
+mysqlsh root@localhost
+\sql
+SET PASSWORD='Welcome1';
+CREATE USER 'admin'@'%' IDENTIFIED WITH mysql_native_password BY 'Welcome1';
+GRANT ALL PRIVILEGES ON *.* TO 'admin'@'%' WITH GRANT OPTION;
 
 12. Configure Master->Slave Replication
 
@@ -309,15 +315,17 @@ grant replication slave on *.* to 'repuser'@'%';
 Creating a Data Snapshot On Master :
 mysqladmin -uadmin -hmaster -P3306 shutdown -pWelcome1
 cd /mysql
+sudo rm -rf db.tar 
 sudo tar cf /home/opc/db.tar data
 sudo scp -i /home/opc/ssh.key /home/opc/db.tar opc@slave:/home/opc
+sudo /mysql/mysql-latest/bin/mysqld_safe --defaults-file=/mysql/etc/my.cnf --user=mysqluser &
 
-Copy data Snapshot to Slave:
+Extract db.tar on Slave:
 mysqladmin -uadmin -hslave -P3306 shutdown -pWelcome1
 cd /mysql
 sudo rm -rf data
 sudo tar -xvf /home/opc/db.tar 
-sudo rm -rf auto.cnf
+sudo rm -rf data/auto.cnf
 sudo /mysql/mysql-latest/bin/mysqld_safe --defaults-file=/mysql/etc/my.cnf --user=mysqluser &
 mysqlsh admin@slave:3306 
 
@@ -350,10 +358,15 @@ SHOW REPLICA STATUS\G
           ......
 ------------------------------------------------------
 
+Test Master->Slave Replication:
+create schema master_table;//on master
+
 13. Configure Slave->Master Replication
 
 On Master:
 
+mysqlsh admin@master:3306
+\sql
 CHANGE REPLICATION SOURCE TO 
 SOURCE_HOST = 'slave', 
 SOURCE_PORT = 3306, 
@@ -383,8 +396,8 @@ SHOW REPLICA STATUS\G
           ...
  ------------------------------------------------------         
           
- Test Master-Master Replication:
- create schema master_table;//on master
+ Test Master<-Master Replication:
+ 
  create schema slave_table;//on slave
  show databases;
  +--------------------+
@@ -398,6 +411,60 @@ SHOW REPLICA STATUS\G
 | sys                |
 +--------------------+
 6 rows in set (0.0008 sec)
+
+
+Install mysql.server automatically:
+sudo cp /mysql/mysql_latest/bin/mysql.server /etc/init.d/mysql
+chmod +x /etc/init.d/mysql
+chkconfig --add mysql
+chkconfig --level 345 mysql on
+
+
+Install MySQL Router:
+
+# sudo wget https://dev.mysql.com/get/Downloads/MySQL-Router/mysql-router-community-8.0.33-1.el8.x86_64.rpm
+# sudo rpm -ivh mysql-router-community-8.0.33-1.el8.x86_64.rpm
+#sudo vi /etc/mysqlrouter/mysqlrouter.conf 
+
+Add following lines:
+------------------------------------------------------ 
+[routing:read_write]
+bind_address = 127.0.0.1
+bind_port = 7001
+mode = read-write
+destinations = 10.0.0.76:3306,10.0.0.108:3306
+max_connections = 65535
+max_connect_errors = 1000
+client_connect_timeout = 9
+routing_strategy=first-available
+
+[routing:read_only]
+bind_address = 127.0.0.1
+bind_port = 7002
+mode = read-only
+destinations = 10.0.0.108:3306,10.0.0.76:3306
+max_connections = 65535
+max_connect_errors = 1000
+client_connect_timeout = 9
+routing_strategy=first-available
+------------------------------------------------------ 
+
+
+#sudo mysqlrouter --config=/etc/mysqlrouter/mysqlrouter.conf
+
+!!!
+#sudo systemctl start mysqlrouter
+
+if you got error like : 
+Job for mysqlrouter.service failed because the control process exited with error code.
+The unit mysqlrouter.service has entered the 'failed' state with result 'exit-code'.
+May 06 09:18:29 master systemd[1]: Failed to start MySQL Router.
+-- Subject: Unit mysqlrouter.service has failed
+
+try to do change owner for the diractory:
+# sudo chown mysqlrouter. /var/lib/mysqlrouter/
+# sudo -u mysqlrouter /usr/bin/mysqlrouter -c /etc/mysqlrouter/mysqlrouter.conf
+# sudo -u mysqlrouter /usr/bin/mysqlrouter -c /etc/mysqlrouter/mysqlrouter.conf
 
 
 14. Option to Create ReplicaSet instead of Master/Master Replication
@@ -420,6 +487,7 @@ seoul.addInstance('admin@slave:3306')
 
 Install MySQL Router:
 sudo yum install mysql-router
+sudo rm -rf /etc/mysqlrouter/*
 sudo mysqlrouter --bootstrap admin@10.0.0.100:3306 --user mysqlrouter(/etc/mysqlrouter/mysqlrouter.conf)
 sudo systemctl start mysqlrouter
 
