@@ -359,7 +359,22 @@ SHOW REPLICA STATUS\G
 ------------------------------------------------------
 
 Test Master->Slave Replication:
-create schema master_table;//on master
+
+ # mysqlsh admin@master:3306
+ # \sql
+ # create schema master_schema;
+ # show databases;
+ +--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| master_schema      |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+5 rows in set (0.0008 sec)
+
 
 13. Configure Slave->Master Replication
 
@@ -398,16 +413,18 @@ SHOW REPLICA STATUS\G
           
  Test Master<-Master Replication:
  
- create schema slave_table;//on slave
- show databases;
- +--------------------+
+ # mysqlsh admin@slave:3306
+ # \sql
+ # create schema slave_schema;
+ # show databases;
++--------------------+
 | Database           |
 +--------------------+
 | information_schema |
-| master_table       |
+| master_schema      |
 | mysql              |
 | performance_schema |
-| slave_table        |
+| slave_schema       |
 | sys                |
 +--------------------+
 6 rows in set (0.0008 sec)
@@ -420,11 +437,11 @@ chkconfig --add mysql
 chkconfig --level 345 mysql on
 
 
-Install MySQL Router:
+14. Install MySQL Router:
 
 # sudo wget https://dev.mysql.com/get/Downloads/MySQL-Router/mysql-router-community-8.0.33-1.el8.x86_64.rpm
 # sudo rpm -ivh mysql-router-community-8.0.33-1.el8.x86_64.rpm
-#sudo vi /etc/mysqlrouter/mysqlrouter.conf 
+# sudo vi /etc/mysqlrouter/mysqlrouter.conf 
 
 Add following lines:
 ------------------------------------------------------ 
@@ -449,25 +466,78 @@ client_connect_timeout = 9
 routing_strategy=first-available
 ------------------------------------------------------ 
 
-
-#sudo mysqlrouter --config=/etc/mysqlrouter/mysqlrouter.conf
-
-!!!
-#sudo systemctl start mysqlrouter
-
-if you got error like : 
-Job for mysqlrouter.service failed because the control process exited with error code.
-The unit mysqlrouter.service has entered the 'failed' state with result 'exit-code'.
-May 06 09:18:29 master systemd[1]: Failed to start MySQL Router.
--- Subject: Unit mysqlrouter.service has failed
-
-try to do change owner for the diractory:
-# sudo chown mysqlrouter. /var/lib/mysqlrouter/
-# sudo -u mysqlrouter /usr/bin/mysqlrouter -c /etc/mysqlrouter/mysqlrouter.conf
-# sudo -u mysqlrouter /usr/bin/mysqlrouter -c /etc/mysqlrouter/mysqlrouter.conf
+# sudo systemctl enable mysqlrouter.service
+# sudo systemctl start mysqlrouter
+OR
+# sudo mysqlrouter --config=/etc/mysqlrouter/mysqlrouter.conf
 
 
-14. Option to Create ReplicaSet instead of Master/Master Replication
+If you getting any errors:
+# sudo tail -f /var/log/mysqlrouter/mysqlrouter.log
+For check MySQL Router help options:
+# mysqlrouter --help
+
+
+Testing MySQL Router with Master-Master Replication:
+
+# sudo service mysqlrouter status
+# mysqlsh admin@10.0.0.100:7001
+# \sql select @@hostname;
++------------+
+| @@hostname |
++------------+
+| master     |
++------------+
+
+Stop MySQL on Master:
+# sudo service mysql stop
+Shutting down MySQL............ SUCCESS! 
+
+# mysqlsh admin@10.0.0.100:7001
+# \sql select @@hostname;
++------------+
+| @@hostname |
++------------+
+| slave      |
++------------+
+
+\sql CREATE TABLE slave_schema.slave_table(id int(3), title VARCHAR(100));
+\sql INSERT INTO slave_schema.slave_table (id, title) VALUES (001, 'Hello Pacemaker');
+\sql SELECT * from slave_schema.slave_table;
++----+-----------------+
+| id | title           |
++----+-----------------+
+|  1 | Hello Pacemaker |
++----+-----------------+
+1 row in set (0.0006 sec)
+
+# sudo service mysql start
+Starting MySQL. SUCCESS! 
+
+# mysqlsh admin@master:3306
+
+Restart Master:
+# sudo service mysql start
+Starting MySQL. SUCCESS! 
+
+# mysqlsh admin@10.0.0.100:7001
+# \sql select @@hostname;
++------------+
+| @@hostname |
++------------+
+| slave      |
++------------+
+1 row in set (0.0004 sec)
+# \sql show replicas;
++-----------+------+------+-----------+--------------------------------------+
+| Server_Id | Host | Port | Source_Id | Replica_UUID                         |
++-----------+------+------+-----------+--------------------------------------+
+|        10 |      | 3306 |        20 | fcbe0e5c-ebe7-11ed-80e5-02001703a987 |
++-----------+------+------+-----------+--------------------------------------+
+1 row in set (0.0008 sec)
+
+
+15. Option to Create ReplicaSet instead of Master/Master Replication(Only Asnyc Master/Replica Replication is supported)
 
 mysqladmin -uadmin -hmaser -P3306 -pWelcome1 shutdown
 mysqladmin -uadmin -hslave -P3306 -pWelcome1 shutdown
@@ -491,23 +561,93 @@ sudo rm -rf /etc/mysqlrouter/*
 sudo mysqlrouter --bootstrap admin@10.0.0.100:3306 --user mysqlrouter(/etc/mysqlrouter/mysqlrouter.conf)
 sudo systemctl start mysqlrouter
 
-15. Add MySQL Router Resource to Pacemaker
-
-sudo pcs resource list | grep router
-pcs resource create mysqlrouter systemd:mysqlrouter clone
-sudo pcs resource status
- ------------------------------------------------------ 
-  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
-  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
-  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
-  * Clone Set: mysqlrouter-clone [mysqlrouter]:
-  * Started: [ master slave ]
- ------------------------------------------------------ 
 
 During Master Fail, needed manul failover by following command:
 mysqlsh admin@10.0.0.100:6447
 seoul = dba.getReplicaSet()
 seoul.forcePrimaryInstance()
+
+16. Add MySQL Router Resource to Pacemaker
+
+# sudo pcs resource list | grep router
+service:mysqlrouter - systemd unit file for mysqlrouter
+systemd:mysqlrouter - systemd unit file for mysqlrouter
+
+# sudo pcs resource create mysqlrouter systemd:mysqlrouter clone
+# sudo pcs resource status
+ ------------------------------------------------------ 
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+    * Started: [ master ]
+    * Stopped: [ slave ]
+ ------------------------------------------------------ 
+ 
+ 
+Testing for MySQL Router HA:
+
+# sudo systemctl stop mysqlrouter (mysqlrouter service should be restart automaticlly.)
+
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='select @@hostname;'
+@@hostname
+master
+# mysqlsh --sql admin@10.0.0.100:7002 --execute='select @@hostname;'
+@@hostname
+slave
+
+Testing for MySQL HA:
+
+Stop MySQL Master(Then Slave will Active as Master):
+# sudo service mysql stop
+Shutting down MySQL......... SUCCESS! 
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='select @@hostname;'
+@@hostname
+slave
+# mysqlsh --sql admin@10.0.0.100:7002 --execute='select @@hostname;'
+@@hostname
+slave
+
+Restart MySQL Master(This will active as Slave, not fallback, !!! Note:7002 Connnection should be master, need to be fix):
+# sudo service mysql start
+Starting MySQL. SUCCESS! 
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='select @@hostname;'
+@@hostname
+slave
+# mysqlsh --sql admin@10.0.0.100:7002 --execute='select @@hostname;'
+@@hostname
+slave
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='show replicas;'
+Server_Id	Host	Port	Source_Id	Replica_UUID
+10		3306	20	fcbe0e5c-ebe7-11ed-80e5-02001703a987
+
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='insert into slave_schema.slave_table value (002, "Hello Corosync");'
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='select * from slave_schema.slave_table;'
+id	title
+1	Hello Pacemaker
+2	Hello Corosync
+
+Restart MySQL Slave(Failover to Master)
+sudo service mysql stop
+Shutting down MySQL............ SUCCESS! 
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='select @@hostname;'
+@@hostname
+master
+
+Restart MySQL Slave(Slave Active)
+# sudo service mysql start
+# mysqlsh --sql admin@10.0.0.100:7001 --execute='select @@hostname;'
+@@hostname
+master
+# mysqlsh --sql admin@10.0.0.100:7002 --execute='select @@hostname;'
+@@hostname
+slave
+
+
+
+
+
+
 
 
 
