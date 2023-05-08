@@ -644,6 +644,246 @@ master
 slave
 
 
+17. Test scenario：
+------------------------------------------------------
+17-1. Pacemake + corocync + MySQL Replication: Create MySQL Service without Clone
+==>> mysqlservice 리소스가 slave일 경우 접속 오류 발생,수동 리소스 move 필요
+==>> mysql master 서비스 장애 동안 접속 오류, 다시 시작후 master 서비스 연결이 자동 복구됨
+==>> master 노드 fail인 경우, slave 노드로 자동 페일 오버됨, 재 시작후 자동 fallback
+
+[opc@master ~]$ sudo pcs resource remove mysqlservice
+Attempting to stop: mysqlservice... 
+Stopped
+[opc@master ~]$ sudo pcs resource create mysqlservice service:mysql  op monitor interval=5s
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * mysqlservice	(service:mysql):	 Started slave
+[opc@master ~]$
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+MySQL Error 2003 (HY000): Can't connect to MySQL server on '10.0.0.100:3306' (111)
+[opc@slave ~]$ 
+
+[opc@master ~]$ sudo pcs resource move mysqlservice master
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * mysqlservice	(service:mysql):	 Started master
+[opc@master ~]$ 
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+master
+[opc@slave ~]$ 
+
+[opc@master ~]$ sudo pcs cluster stop master
+master: Stopping Cluster (pacemaker)...
+master: Stopping Cluster (corosync)...
+
+[opc@slave ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started slave
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started slave
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started slave
+  * mysqlservice	(service:mysql):	 Started slave
+[opc@slave ~]$ 
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+slave
+
+[opc@master ~]$ sudo pcs cluster start master
+master: Starting Cluster...
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * mysqlservice	(service:mysql):	 Started master
+[opc@master ~]$ 
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+master
+[opc@slave ~]$ 
+------------------------------------------------------
+17-2. Pacemake + corocync + MySQL Replication: Create MySQL Service with Clone
+==>> Master 노드 장애시, 모든 리소스가 slave 노드로 자동 페일오버됨, master노드 재 시작후 자동 fallback됨
+==>> mysql master 서비스 장애 동안 접속 오류, 다시 시작후 master 서비스 연결이 자동 복구됨
+==>> mysqlservice 리소스 move 할 필요 없음, 두 노드에서 모두 실행 상태
+
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+[opc@master ~]$ 
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+master
+[opc@slave ~]$ 
+
+[opc@master ~]$ sudo pcs cluster stop master
+master: Stopping Cluster (pacemaker)...
+master: Stopping Cluster (corosync)...
+
+[opc@slave ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started slave
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started slave
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started slave
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ slave ]
+    * Stopped: [ master ]
+[opc@slave ~]$ 
+
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+slave
+
+[opc@master ~]$ sudo pcs cluster start master
+master: Starting Cluster...
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+
+[opc@slave ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+master
+
+
+[opc@master ~]$ sudo service mysql stop
+Shutting down MySQL............ SUCCESS! 
+[opc@master ~]$ 
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+MySQL Error 2003 (HY000): Can't connect to MySQL server on '10.0.0.100:3306' (111)
+......
+......
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:3306 --sql --execute='select @@hostname;'
+@@hostname
+master
+[opc@slave ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+[opc@slave ~]$ 
+
+
+------------------------------------------------------
+17-3. Pacemake + corocync + MySQL Replication + MySQL Router(Master노드만 설치): 
+==>> Master 노드 장애시, mysqlrouter를 제외한 리소스가 slave 노드로 자동 페일오버됨, mysqlrouter서비스 접속 불가
+==>> Master노드 재 시작후, mysqlrouter는 Master 노드에서만 시작됨, Master노드로 부터 접속 가능
+==>> mysql master 서비스 장애 동안 접속 오류 발생하지 않고 바로 slave노드의 mysql 서비스로 자동 페일오버, master노드 재시작후 fallback 되지 않음
+
+
+[opc@master ~]$ sudo pcs resource create mysqlrouter systemd:mysqlrouter clone
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+    * mysqlrouter	(systemd:mysqlrouter):	 FAILED slave===>>>MySQL Router는 Master노드에만 설치되여 있음
+    * Started: [ master ]
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+    * Started: [ master ]
+    * Stopped: [ slave ]
+[opc@master ~]$ 
+
+[opc@master ~]$ sudo pcs cluster stop master
+master: Stopping Cluster (pacemaker)...
+master: Stopping Cluster (corosync)...
+[opc@master ~]$ sudo pcs resource status
+Error: unable to get cluster status from crm_mon
+error: Could not connect to launcher: Connection refused
+crm_mon: Connection to cluster failed: Connection refused
+[opc@master ~]$ 
+
+[opc@slave ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started slave
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started slave
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started slave
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ slave ]
+    * Stopped: [ master ]
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+    * Stopped: [ master slave ]===>>> 모두 중지 상태
+[opc@slave ~]$ 
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:7001 --sql --execute='select @@hostname;'
+Please provide the password for 'admin@10.0.0.100:7001': ********
+MySQL Error 2003 (HY000): Can't connect to MySQL server on '10.0.0.100:7001' (111) ===>>>slave노드에서 접속 불가
+[opc@slave ~]$
+
+[opc@master ~]$ mysqlsh admin@10.0.0.100:7001 --sql  --execute='select @@hostname'
+MySQL Error 2003 (HY000): Can't connect to MySQL server on '10.0.0.100:7001' (113)===>>>master노드에서 접속 불가
+
+[opc@master ~]$ sudo pcs cluster start master
+master: Starting Cluster...
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+    * Started: [ master ]
+    * Stopped: [ slave ]
+[opc@master ~]$ 
+
+[opc@slave ~]$ mysqlsh admin@10.0.0.100:7001 --sql --execute='select @@hostname;'
+Please provide the password for 'admin@10.0.0.100:7001': ********
+MySQL Error 2003 (HY000): Can't connect to MySQL server on '10.0.0.100:7001' (110)===>>>slave노드에서 접속 불가
+[opc@slave ~]$ 
+
+[opc@master ~]$ mysqlsh admin@10.0.0.100:7001 --sql --execute='select @@hostname;' ===>>>master노드에서 접속 가능
+@@hostname
+master
+[opc@master ~]$ 
+
+
+[opc@master ~]$ sudo service mysql stop
+Shutting down MySQL............ SUCCESS! 
+[opc@master ~]$ 
+[opc@master ~]$ sudo pcs resource status
+  * dummy_service	(ocf::pacemaker:Dummy):	 Started master
+  * VirtualIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Cluster_VIP	(ocf::heartbeat:IPaddr2):	 Started master
+  * Clone Set: mysqlservice-clone [mysqlservice]:
+    * Started: [ master slave ]
+  * Clone Set: mysqlrouter-clone [mysqlrouter]:
+    * Started: [ master ]
+    * Stopped: [ slave ]   
+[opc@master ~]$ sudo service mysql status
+ SUCCESS! MySQL running (1446988)
+[opc@master ~]$ 
+
+[opc@master ~]$ mysqlsh admin@10.0.0.100:7001 --sql --execute='select @@hostname;'
+@@hostname
+slave
+[opc@master ~]$ 
+
 
 
 
