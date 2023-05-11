@@ -396,6 +396,8 @@ chmod +x /etc/init.d/mysql
 chkconfig --add mysql
 chkconfig --level 345 mysql on
 
+# sudo pcs resource create mysqlservice service:mysql op monitor interval=5s
+# sudo pcs constraint colocation add Cluster_VIP with mysqlservice score=INFINITY
 
 13. Options to Install MySQL Router with Master/Master Replication:
 
